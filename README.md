@@ -1,6 +1,10 @@
 # PSCopyFileEx
 
-A PowerShell module for copying files with advanced progress reporting and Windows API support. Features include detailed progress bars, speed reporting, and support for both managed and Windows API file copy operations.
+A PowerShell module for copying files with advanced progress reporting using CopyFileEx from Win32Api.
+
+Features include detailed progress bars, speed reporting.
+
+It supports copying files using both managed operations and the Windows API.
 
 ## Features
 
