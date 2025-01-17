@@ -1,0 +1,75 @@
+TOPIC
+    about_PSCopyFileEx
+
+SHORT DESCRIPTION
+    A PowerShell module for copying files with advanced progress reporting and Windows API support.
+
+LONG DESCRIPTION
+    PSCopyFileEx is a PowerShell module that provides enhanced file copy capabilities with
+    detailed progress reporting. It leverages the Windows CopyFileEx API when available
+    and falls back to managed file copy operations when necessary.
+
+    The module exports a single cmdlet:
+    - Copy-FileEx: Copies files with advanced progress reporting
+
+FEATURES
+    * Windows API Integration
+      - Uses CopyFileEx for optimal performance
+      - Automatic fallback to managed copy
+      - Configurable via UseWinApi parameter
+
+    * Advanced Progress Reporting
+      - Current speed with rolling average
+      - Total progress for multiple files
+      - Individual file progress
+      - Detailed status messages
+
+    * File Operation Support
+      - Single file copy
+      - Directory copy
+      - Recursive operations
+      - Wildcard support
+
+EXAMPLES
+    Copy a single file:
+        Copy-FileEx -Path "C:\source\file.txt" -Destination "D:\backup"
+
+    Copy with overwrite:
+        Copy-FileEx -Path "C:\source\file.txt" -Destination "D:\backup" -Force
+
+    Recursive directory copy:
+        Copy-FileEx -Path "C:\source\folder" -Destination "D:\backup" -Recurse
+
+    Copy multiple files:
+        Copy-FileEx -Path "C:\source\*.txt" -Destination "D:\backup"
+
+    Pipeline usage:
+        Get-ChildItem "C:\source" -Filter "*.txt" | Copy-FileEx -Destination "D:\backup"
+
+    Use managed copy method:
+        Copy-FileEx -Path "C:\source\file.txt" -Destination "D:\backup" -UseWinApi $false
+
+NOTES
+    Performance Considerations:
+    - Windows API method is generally faster
+    - Large files benefit from API buffering
+    - Network paths use compressed traffic when possible
+    - Progress reporting has minimal overhead
+
+    Safety Notes:
+    - Always specify -Force to overwrite
+    - Use LiteralPath for special characters
+    - Check verbose output for detailed operations
+    - Test recursive operations on small directories first
+
+TROUBLESHOOTING
+    If copies fail:
+    1. Check file/folder permissions
+    2. Verify paths are accessible
+    3. Try with -UseWinApi $false
+    4. Use -Verbose for detailed logging
+    5. Check for file locks or access issues
+
+SEE ALSO
+    Online documentation: https://github.com/LordBubblesDev/PSCopyFileEx
+    Get-Help Copy-FileEx -Full 
