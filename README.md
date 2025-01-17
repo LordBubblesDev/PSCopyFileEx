@@ -2,7 +2,7 @@
 
 A PowerShell module for copying files with advanced progress reporting and Windows API support. Features include detailed progress bars, speed reporting, and support for both managed and Windows API file copy operations.
 
-# Features
+## Features
 
 - Windows API support through CopyFileEx
 - Managed file copy fallback when API is unavailable
@@ -18,7 +18,7 @@ A PowerShell module for copying files with advanced progress reporting and Windo
 - PassThru parameter for returning copied file objects
 - Pipeline support for copying multiple files
 
-# Installation
+## Installation
 
 1. Install the module
 ```powershell
@@ -29,55 +29,55 @@ Install-Module -Name PSCopyFileEx
 Import-Module PSCopyFileEx
 ```
 
-# Usage
+## Usage
 
-## Basic File Copy
+### Basic File Copy
 ```powershell
 Copy-FileEx -Path "C:\source\file.txt" -Destination "D:\backup"
 ```
 
-## Copy with Force Overwrite
+### Copy with Force Overwrite
 ```powershell
 Copy-FileEx -Path "C:\source\file.txt" -Destination "D:\backup" -Force
 ```
 
-## Copy Directory Recursively
+### Copy Directory Recursively
 ```powershell
 Copy-FileEx -Path "C:\source\folder" -Destination "D:\backup" -Recurse
 ```
 
-## Copy with Verbose Output
+### Copy with Verbose Output
 ```powershell
 Copy-FileEx -Path "C:\source\file.txt" -Destination "D:\backup" -Verbose
 ```
 
-## Copy Files with Special Characters
+### Copy Files with Special Characters
 ```powershell
 Copy-FileEx -LiteralPath "C:\source\file[1].txt" -Destination "D:\backup"
 ```
 
-## Copy Multiple Files using Wildcards
+### Copy Multiple Files using Wildcards
 ```powershell
 Copy-FileEx -Path "C:\source\*.txt" -Destination "D:\backup"
 ```
 
-## Copy Using Managed Method (No Win32API)
+### Copy Using Managed Method (No Win32API)
 ```powershell
 Copy-FileEx -Path "C:\source\file.txt" -Destination "D:\backup" -UseWinApi $false
 ```
 
-## Pipeline Support
+### Pipeline Support
 ```powershell
 Get-ChildItem "C:\source" -Filter "*.txt" | Copy-FileEx -Destination "D:\backup"
 ```
 
-## Special Filters
+### Special Filters
 ```powershell
 Copy-FileEx -Path "C:\source\" -Destination "D:\backup" -Include "*.txt" -Recurse
 Copy-FileEx -Path "C:\source\" -Destination "D:\backup" -Exclude ".git" -Recurse -Force
 ```
 
-# Parameters
+## Parameters
 
 - `Path`: Path to source file(s) or directory (supports wildcards)
 - `LiteralPath`: Path to source file(s) or directory (no wildcard interpretation)
@@ -89,14 +89,14 @@ Copy-FileEx -Path "C:\source\" -Destination "D:\backup" -Exclude ".git" -Recurse
 - `PassThru`: Return copied file objects
 - `UseWinApi`: Use Windows API for copying (default: $true)
 
-# Notes
+## Notes
 
 - The module will automatically fall back to managed copy if Win32API is unavailable
 - Progress reporting works in both API and managed copy modes
 - Directory structure is preserved in recursive copies
 - Files are not overwritten unless -Force is specified
 
-# Examples
+## Examples
 
 For more detailed help and examples, run:
 ```powershell
