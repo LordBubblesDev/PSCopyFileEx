@@ -110,9 +110,40 @@ Function Copy-FileEx {
     )
 
     begin {
+        Write-Debug @"
+`n=== Copy-FileEx Debug Information ===
+Parameter Set: $($PSCmdlet.ParameterSetName)
+Path: $($Path -join ', ')
+LiteralPath: $($LiteralPath -join ', ')
+Destination: $Destination
+Include: $($Include -join ', ')
+Exclude: $($Exclude -join ', ')
+Recurse: $Recurse
+Force: $Force
+UseWinApi: $UseWinApi
+=================================
+"@
+
         # Generate a random progress ID to avoid conflicts
         $progressId = Get-Random -Minimum 0 -Maximum 1000
         $childProgressId = $progressId + 1
+
+        # Initialize cancellation support and register CTRL+C handler
+        $script:cancelRequested = $false
+        $null = [Console]::TreatControlCAsInput = $true
+        
+        # Function to check for CTRL+C
+        function Test-CancellationRequested {
+            if ([Console]::KeyAvailable) {
+                $key = [Console]::ReadKey($true)
+                if ($key.Key -eq 'C' -and $key.Modifiers -eq 'Control') {
+                    Write-Warning "Cancellation requested by user"
+                    $script:cancelRequested = $true
+                    return $true
+                }
+            }
+            return $false
+        }
 
         # Initialize all variables that will be used across the function
         $script:speedSampleSize = 100  # Number of samples to average
@@ -208,52 +239,86 @@ Function Copy-FileEx {
     }
 
     process {
+        # Add cancellation check at the start of process block
+        if ($script:cancelCheckJob.State -eq 'Completed' -and $script:cancelCheckJob.Output) {
+            $script:cancelRequested = $true
+            Write-Warning "Operation cancelled by user"
+            return
+        }
+
+        Write-Debug "Process block started"
         # Handle both Path and LiteralPath parameters
         $pathsToProcess = @()
         if ($LiteralPath) {
+            Write-Debug "Using LiteralPath: $($LiteralPath -join ', ')"
             $pathsToProcess += $LiteralPath
             $useWildcards = $false
         } else {
+            Write-Debug "Using Path: $($Path -join ', ')"
             $pathsToProcess += $Path
             $useWildcards = $true
         }
 
         foreach ($currentPath in $pathsToProcess) {
+            Write-Debug "Processing path: $currentPath"
             # Process paths based on whether they're literal or support wildcards
             try {
+                Write-Debug "Testing path existence"
                 # Handle path resolution differently for files with special characters
                 if (Test-Path -LiteralPath $currentPath) {
+                    Write-Debug "Path exists (LiteralPath): $currentPath"
                     $resolvedPaths = @([pscustomobject]@{
                         Path = $currentPath
                         ProviderPath = (Get-Item -LiteralPath $currentPath).FullName
                     })
+                    Write-Debug "Resolved to: $($resolvedPaths.ProviderPath)"
                 } else {
+                    Write-Debug "Path does not exist directly, attempting resolution"
                     if ($useWildcards) {
+                        Write-Debug "Resolving with wildcards"
                         $resolvedPaths = Resolve-Path -Path $currentPath -ErrorAction Stop
                     } else {
+                        Write-Debug "Resolving without wildcards"
                         $resolvedPaths = Resolve-Path -LiteralPath $currentPath -ErrorAction Stop
                     }
+                    Write-Debug "Resolved paths count: $($resolvedPaths.Count)"
                 }
 
                 foreach ($resolvedPath in $resolvedPaths) {
-                    # Apply Include/Exclude filters
+                    Write-Debug "Processing resolved path: $($resolvedPath.Path)"
+                    
+                    # Check if the current path is a directory
+                    $isDirectory = (Get-Item -LiteralPath $resolvedPath.Path) -is [System.IO.DirectoryInfo]
+                    Write-Debug "Is Directory: $isDirectory"
+                    
+                    # Only apply Include/Exclude filters to files, not directories
                     $shouldProcess = $true
-                    if ($Include) {
-                        $shouldProcess = $resolvedPath.Path | Where-Object { 
-                            $item = $_
-                            return ($Include | ForEach-Object { $item -like $_ }) -contains $true
+                    if (-not $isDirectory) {
+                        if ($Include) {
+                            Write-Debug "Checking Include filters: $($Include -join ', ')"
+                            $shouldProcess = $resolvedPath.Path | Where-Object { 
+                                $item = $_
+                                $matchResult = ($Include | ForEach-Object { $item -like $_ }) -contains $true
+                                Write-Debug "Include match result for $item : $matchResult"
+                                return $matchResult
+                            }
                         }
-                    }
-                    if ($Exclude -and $shouldProcess) {
-                        $shouldProcess = $resolvedPath.Path | Where-Object { 
-                            $item = $_
-                            return ($Exclude | ForEach-Object { $item -like $_ }) -notcontains $true
+                        if ($Exclude -and $shouldProcess) {
+                            Write-Debug "Checking Exclude filters: $($Exclude -join ', ')"
+                            $shouldProcess = $resolvedPath.Path | Where-Object { 
+                                $item = $_
+                                $matchResult = ($Exclude | ForEach-Object { $item -like $_ }) -notcontains $true
+                                Write-Debug "Exclude match result for $item : $matchResult"
+                                return $matchResult
+                            }
                         }
                     }
 
+                    Write-Debug "Should process path: $shouldProcess"
                     if ($shouldProcess) {
                         # Check if we should process this item
                         $targetPath = Join-Path $Destination (Split-Path -Leaf $resolvedPath.ProviderPath)
+                        Write-Debug "Target path: $targetPath"
                         if ($Force -or $PSCmdlet.ShouldProcess($targetPath)) {
                             # Handle wildcards in path
                             $sourcePath = Split-Path -Path $currentPath -Parent
@@ -265,25 +330,49 @@ Function Copy-FileEx {
                                 $relativePath = $null
                                 
                                 if ($sourceFilter.Contains('*')) {
+                                    Write-Debug "Path contains wildcards: $sourceFilter"
                                     # Path contains wildcards
+                                    Write-Debug "Getting child items with filter: $sourceFilter"
                                     $files = Get-ChildItem -Path $sourcePath -Filter $sourceFilter -File -Recurse:$Recurse -ErrorAction Stop
+                                    Write-Debug "Found $($files.Count) files matching filter"
+                                    $isFile = $false
                                     $basePath = $sourcePath
                                 } else {
+                                    Write-Debug "Path is direct: $currentPath"
                                     # Single file or directory
                                     $item = Get-Item -LiteralPath $currentPath -ErrorAction Stop
                                     $isFile = $item -is [System.IO.FileInfo]
+                                    Write-Debug "Item is file: $isFile"
                                     if ($isFile) {
-                                        Write-Verbose "Single file: $($item.Name)"
+                                        Write-Debug "Single file: $($item.Name)"
                                         $files = @($item)
                                         $basePath = Split-Path -Path $item.FullName -Parent
                                         # For single files, use the file's directory as base path
                                         $relativePath = $item.Name
                                     } else {
-                                        $files = Get-ChildItem -Path $currentPath -File -Recurse:$Recurse -ErrorAction Stop
+                                        Write-Debug "Directory: $($item.FullName)"
+                                        # For directories, apply Include/Exclude filters to Get-ChildItem
+                                        $gciParams = @{
+                                            Path = $currentPath
+                                            File = $true
+                                            Recurse = $Recurse
+                                            ErrorAction = 'Stop'
+                                        }
+                                        if ($Include) {
+                                            $gciParams['Include'] = $Include
+                                            Write-Debug "Adding Include filter to Get-ChildItem: $($Include -join ', ')"
+                                        }
+                                        if ($Exclude) {
+                                            $gciParams['Exclude'] = $Exclude
+                                            Write-Debug "Adding Exclude filter to Get-ChildItem: $($Exclude -join ', ')"
+                                        }
+                                        Write-Debug "Getting child items with parameters: $($gciParams | ConvertTo-Json)"
+                                        $files = Get-ChildItem @gciParams
+                                        Write-Debug "Found $($files.Count) files in directory"
                                         $basePath = $item.FullName
                                     }
                                 }
-                                Write-Verbose "Base Path: $basePath"
+                                Write-Debug "Base Path: $basePath"
                             }
                             catch {
                                 Write-Warning "Error accessing path: $_"
@@ -359,9 +448,6 @@ Function Copy-FileEx {
                                     Write-Verbose "Overwriting existing file: $destPath"
                                 }
 
-                                # Store verbose message
-                                $verboseOutput += "Copied '$($file.Name)' to '$destPath'"
-
                                 try {
                                     if ($useWin32Api) {
                                         $cancel = $false
@@ -389,6 +475,12 @@ Function Copy-FileEx {
                                             )
                                             
                                             try {
+                                                # Check for cancellation
+                                                if ($script:cancelRequested) {
+                                                    Write-Verbose "Cancellation detected in callback"
+                                                    return [uint32]1  # PROGRESS_CANCEL
+                                                }
+
                                                 # Use API values directly
                                                 $percent = [math]::Min([math]::Round(($TotalBytesTransferred * 100) / [math]::Max($TotalFileSize, 1), 0), 100)
 
@@ -463,28 +555,56 @@ Function Copy-FileEx {
 
                                         if (-not $result) {
                                             $errorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                                            if ($script:cancelRequested) {
+                                                Write-Warning "File copy cancelled by user"
+                                                break
+                                            }
                                             throw "CopyFileEx failed with error code: $errorCode"
                                         }
 
                                         $totalBytesCopied += $file.Length
                                     }
                                     else {
+                                        $continueProcessing = $true
+                                        $sourceStream = $null
+                                        $destStream = $null
+                                        
                                         try {
                                             Write-Verbose "Using managed method for file copy operations"
-                                            $sourceStream = [System.IO.File]::OpenRead($file.FullName)
-                                            $destStream = [System.IO.File]::Create($destPath)
+                                            $sourceStream = [System.IO.FileStream]::new($file.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read)
+                                            $destStream = [System.IO.FileStream]::new($destPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
                                             $bytesRead = 0
                                             $fileSize = [Math]::Max($file.Length, 1)
                                             $fileBytesCopied = 0
                                 
-                                            while (($bytesRead = $sourceStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-                                                $destStream.Write($buffer, 0, $bytesRead)
+                                            :copyLoop while ($continueProcessing -and -not $script:cancelRequested -and ($bytesRead = $sourceStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                                                # Check for cancellation before writing
+                                                if (Test-CancellationRequested) {
+                                                    Write-Warning "Cancelling file copy operation..."
+                                                    $continueProcessing = $false
+                                                    break copyLoop
+                                                }
+
+                                                try {
+                                                    $destStream.Write($buffer, 0, $bytesRead)
+                                                }
+                                                catch {
+                                                    Write-Warning "Error writing to destination: $_"
+                                                    $continueProcessing = $false
+                                                    break copyLoop
+                                                }
+                                                
                                                 $fileBytesCopied += $bytesRead
                                                 $totalBytesCopied += $bytesRead
                                 
                                                 # Update progress less frequently
                                                 $now = [DateTime]::Now
                                                 if (($now - $lastProgressUpdate) -gt $progressThreshold) {
+                                                    if ($script:cancelRequested) {
+                                                        $continueProcessing = $false
+                                                        break copyLoop
+                                                    }
+
                                                     $totalPercent = [math]::Min([math]::Round(($totalBytesCopied / $totalSize * 100), 0), 100)
                                                     $filePercent = [math]::Min([math]::Round(($fileBytesCopied / $fileSize * 100), 0), 100)
                                                     
@@ -521,14 +641,77 @@ Function Copy-FileEx {
                                                 }
                                             }
                                         }
+                                        catch {
+                                            Write-Warning "Error during file copy: $_"
+                                            $continueProcessing = $false
+                                        }
                                         finally {
-                                            if ($sourceStream) { $sourceStream.Close() }
-                                            if ($destStream) { $destStream.Close() }
+                                            # Ensure streams are closed and disposed immediately
+                                            if ($sourceStream) {
+                                                try {
+                                                    $sourceStream.Close()
+                                                    $sourceStream.Dispose()
+                                                }
+                                                catch { }
+                                                $sourceStream = $null
+                                            }
+                                            if ($destStream) {
+                                                try {
+                                                    $destStream.Close()
+                                                    $destStream.Dispose()
+                                                }
+                                                catch { }
+                                                $destStream = $null
+                                            }
+
+                                            # Clean up partial file if cancelled or failed
+                                            if (-not $continueProcessing -or $script:cancelRequested) {
+                                                Write-Verbose "Cleaning up partial file after cancellation/failure: $destPath"
+                                                try {
+                                                    [System.GC]::Collect()  # Force garbage collection
+                                                    [System.GC]::WaitForPendingFinalizers()  # Wait for finalizers
+                                                    
+                                                    if (Test-Path -Path $destPath) {
+                                                        # Try to open the file exclusively to ensure it's not locked
+                                                        $fileInfo = [System.IO.FileInfo]::new($destPath)
+                                                        try {
+                                                            $stream = $fileInfo.Open([System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+                                                            $stream.Close()
+                                                            $stream.Dispose()
+                                                            
+                                                            # Now we can safely delete the file
+                                                            Remove-Item -Path $destPath -Force -ErrorAction Stop
+                                                            Write-Verbose "Successfully removed partial file: $destPath"
+                                                        }
+                                                        catch {
+                                                            Write-Warning "File is still locked, waiting for handles to be released..."
+                                                            Start-Sleep -Milliseconds 500
+                                                            Remove-Item -Path $destPath -Force -ErrorAction Stop
+                                                        }
+                                                    }
+                                                }
+                                                catch {
+                                                    Write-Warning "Failed to remove partial file $destPath : $_"
+                                                }
+                                            }
+                                        }
+                                        
+                                        # Exit immediately if cancelled
+                                        if ($script:cancelRequested) {
+                                            return
                                         }
                                     }
                                 }
                                 catch {
                                     Write-Warning "Error copying $($file.Name): $_"
+                                    if ($script:cancelRequested) {
+                                        break
+                                    }
+                                }
+
+                                # Break the file loop if cancellation was requested
+                                if ($script:cancelRequested) {
+                                    break
                                 }
                             }
 
@@ -543,13 +726,16 @@ Function Copy-FileEx {
                                 "{0:s's'}" -f $elapsedTime
                             }
 
-                            if ($files.Count -gt 1) {
-                                $verboseOutput += "Total copied: $(Format-FileSize $totalSize) ($($files.Count) files)"
-                            } else {
-                                $verboseOutput += "Total size: $(Format-FileSize $totalSize)"
-                            }
+                            # Only show completion messages if not cancelled
+                            if (-not $script:cancelRequested) {
+                                if ($files.Count -gt 1) {
+                                    $verboseOutput += "Total copied: $(Format-FileSize $totalSize) ($($files.Count) files)"
+                                } else {
+                                    $verboseOutput += "Total size: $(Format-FileSize $totalSize)"
+                                }
 
-                            $verboseOutput += "Operation completed in $elapsedText"
+                                $verboseOutput += "Operation completed in $elapsedText"
+                            }
 
                             # Write all verbose messages at once after copying is complete
                             if ($PSCmdlet.MyInvocation.BoundParameters["Verbose"].IsPresent) {
@@ -578,5 +764,12 @@ Function Copy-FileEx {
                 Write-Error -ErrorRecord $_
             }
         }
+    }
+
+    end {
+        Write-Debug "End block started"
+        # Restore console input handling
+        [Console]::TreatControlCAsInput = $false
+        Write-Debug "Function completed"
     }
 }

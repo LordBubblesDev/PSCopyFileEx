@@ -12,7 +12,7 @@
 RootModule = 'PSCopyFileEx.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.0.0'
+ModuleVersion = '1.0.1'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -119,7 +119,19 @@ PrivateData = @{
         # IconUri = ''
 
         # ReleaseNotes of this module
-        ReleaseNotes = @"
+        ReleaseNotes = @'
+1.0.1:
+- Fixed Include/Exclude filter handling for recursive directory operations
+- Improved CTRL+C cancellation handling for both API and managed copy methods
+- Fixed file handle cleanup and proper stream disposal
+- Added immediate stream closure on cancellation
+- Added proper cleanup of partial files when cancelled
+- Fixed progress reporting to not show success messages when cancelled
+- Added debug logging for troubleshooting
+- Fixed file locking issues during cancellation
+- Improved error handling and reporting
+- Added proper garbage collection during cleanup
+
 1.0.0 - Initial release with support for:
 - Advanced progress reporting with speed calculations
 - Windows API support through CopyFileEx
@@ -127,7 +139,7 @@ PrivateData = @{
 - Support for single files and directories
 - Recursive copy support
 - Force parameter for overwrite control
-"@
+'@
 
         # External dependent modules of this module
         # ExternalModuleDependencies = ''
