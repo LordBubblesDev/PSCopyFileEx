@@ -12,7 +12,7 @@
 RootModule = 'PSCopyFileEx.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.0.1'
+ModuleVersion = '1.0.2'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -120,6 +120,12 @@ PrivateData = @{
 
         # ReleaseNotes of this module
         ReleaseNotes = @'
+1.0.2:
+- Fixed verbose messages showing success messages when the operation failed
+- Fixed verbose messages indicating which copy method is used once per file copied
+- Fixed files being overwritten without -Force parameter when the file names include wildcards
+- Fixed cancellation with CTRL+C not working in all cases
+
 1.0.1:
 - Fixed Include/Exclude filter handling for recursive directory operations
 - Improved CTRL+C cancellation handling for both API and managed copy methods

@@ -67,7 +67,7 @@
 # .NOTES
 # Author: LordBubbles
 # Module: PSCopyFileEx
-# Version: 1.0.0
+# Version: 1.0.2
 #
 # Performance Notes:
 # - Windows API method is generally faster
@@ -231,10 +231,15 @@ UseWinApi: $UseWinApi
                     Add-Type -MemberDefinition $signature -Name "Win32CopyFileEx" -Namespace "Win32Helpers"
                 }
                 catch {
-                    Write-Warning "Failed to use Windows API for file copy operations, falling back to managed copy method"
+                    Write-Warning "Failed to detect the Win32 API library."
                     $useWin32Api = $false
                 }
             }
+        }
+        if ($useWin32Api) {
+            Write-Verbose "Using Windows API for file copy operations"
+        } else {
+            Write-Verbose "Using managed file copy method"
         }
     }
 
@@ -261,10 +266,8 @@ UseWinApi: $UseWinApi
 
         foreach ($currentPath in $pathsToProcess) {
             Write-Debug "Processing path: $currentPath"
-            # Process paths based on whether they're literal or support wildcards
             try {
                 Write-Debug "Testing path existence"
-                # Handle path resolution differently for files with special characters
                 if (Test-Path -LiteralPath $currentPath) {
                     Write-Debug "Path exists (LiteralPath): $currentPath"
                     $resolvedPaths = @([pscustomobject]@{
@@ -291,7 +294,6 @@ UseWinApi: $UseWinApi
                     $isDirectory = (Get-Item -LiteralPath $resolvedPath.Path) -is [System.IO.DirectoryInfo]
                     Write-Debug "Is Directory: $isDirectory"
                     
-                    # Only apply Include/Exclude filters to files, not directories
                     $shouldProcess = $true
                     if (-not $isDirectory) {
                         if ($Include) {
@@ -316,8 +318,7 @@ UseWinApi: $UseWinApi
 
                     Write-Debug "Should process path: $shouldProcess"
                     if ($shouldProcess) {
-                        # Check if we should process this item
-                        $targetPath = Join-Path $Destination (Split-Path -Leaf $resolvedPath.ProviderPath)
+                        $targetPath = $Destination
                         Write-Debug "Target path: $targetPath"
                         if ($Force -or $PSCmdlet.ShouldProcess($targetPath)) {
                             # Handle wildcards in path
@@ -384,11 +385,10 @@ UseWinApi: $UseWinApi
                                 continue
                             }
 
-                            # Calculate total size
-                            Write-Verbose "Calculating total size..."
                             try {
                                 $totalSize = ($files | Measure-Object -Property Length -Sum).Sum
-                                Write-Verbose "Total bytes to copy: $totalSize"
+                                Write-Verbose "Total size: $(Format-FileSize $totalSize)"
+                                Write-Verbose "Total files: $($files.Count)"
                             }
                             catch {
                                 Write-Warning "Error calculating size: $_"
@@ -422,6 +422,7 @@ UseWinApi: $UseWinApi
                             $filesCopied = 0
                             $verboseOutput = @()  # Collect verbose messages
                             foreach ($file in $files) {
+                                $failed = $false
                                 $filesCopied++
                                 # Calculate relative path for destination
                                 if ($isFile) {
@@ -440,7 +441,7 @@ UseWinApi: $UseWinApi
                                 }
 
                                 # Check if destination file exists and handle Force parameter
-                                if (Test-Path -Path $destPath -PathType Leaf) {
+                                if (Test-Path -LiteralPath $destPath) {
                                     if (-not $Force) {
                                         Write-Warning "Destination file already exists: $destPath. Use -Force to overwrite."
                                         continue
@@ -451,8 +452,28 @@ UseWinApi: $UseWinApi
                                 try {
                                     if ($useWin32Api) {
                                         $cancel = $false
-                                        Write-Verbose "Using Windows API for file copy operations"
                                         
+                                        # Determine optimal copy flags
+                                        $copyFlags = 0
+                                        
+                                        # Check if path is network path or mapped drive more safely
+                                        if ($destPath -like "\\*") {
+                                            $copyFlags = $copyFlags -bor 0x10000000  # COPY_FILE_REQUEST_COMPRESSED_TRAFFIC
+                                            Write-Verbose "Network path detected, using compressed traffic"
+                                        }
+                                        elseif ($destPath -match "^[A-Z]:\\") {
+                                            try {
+                                                $drive = Get-PSDrive -Name $destPath[0] -ErrorAction Stop
+                                                if ($drive.DisplayRoot -like "\\*") {
+                                                    $copyFlags = $copyFlags -bor 0x10000000  # COPY_FILE_REQUEST_COMPRESSED_TRAFFIC
+                                                    Write-Verbose "Network mapped drive detected, using compressed traffic"
+                                                }
+                                            }
+                                            catch {
+                                                Write-Debug "Drive check failed: $_"
+                                            }
+                                        }
+
                                         # Create script-scope variables for the callback
                                         $script:currentFile = $file
                                         $script:filesCount = $files.Count
@@ -460,6 +481,10 @@ UseWinApi: $UseWinApi
                                         $script:totalBytesCopied = $totalBytesCopied
                                         $script:totalSize = $totalSize
                                         $script:progressId = $progressId
+                                        $script:lastSpeedUpdate = [DateTime]::Now
+                                        $script:lastTime = [DateTime]::Now
+                                        $script:lastBytes = 0
+                                        $script:currentSpeed = 0
 
                                         $callback = {
                                             param(
@@ -476,8 +501,8 @@ UseWinApi: $UseWinApi
                                             
                                             try {
                                                 # Check for cancellation
-                                                if ($script:cancelRequested) {
-                                                    Write-Verbose "Cancellation detected in callback"
+                                                if (Test-CancellationRequested) {
+                                                    Write-Warning "Cancellation requested by user"
                                                     return [uint32]1  # PROGRESS_CANCEL
                                                 }
 
@@ -488,29 +513,22 @@ UseWinApi: $UseWinApi
                                                 $now = [DateTime]::Now
                                                 if (($now - $script:lastSpeedUpdate).TotalSeconds -ge 1) {
                                                     $timeDiff = ($now - $script:lastTime).TotalSeconds
-                                                    
-                                                    # Detect new file start (when bytes transferred is less than last bytes)
-                                                    if ($TotalBytesTransferred -lt $script:lastBytes) {
-                                                        $script:lastBytes = 0
-                                                        $script:lastTime = $now
-                                                        $script:currentSpeed = 0
-                                                    } else {
+                                                    if ($timeDiff -gt 0) {
                                                         $bytesDiff = $TotalBytesTransferred - $script:lastBytes
-                                                        # Ensure we never report negative speeds
-                                                        $script:currentSpeed = if ($timeDiff -gt 0) { [math]::Max(0, [math]::Round($bytesDiff / $timeDiff)) } else { 0 }
+                                                        $script:currentSpeed = $bytesDiff / $timeDiff
+                                                        $script:lastTime = $now
+                                                        $script:lastBytes = $TotalBytesTransferred
+                                                        $script:lastSpeedUpdate = $now
                                                     }
-                                                    
-                                                    $script:lastTime = $now
-                                                    $script:lastBytes = $TotalBytesTransferred
-                                                    $script:lastSpeedUpdate = $now
                                                 }
 
                                                 if ($script:filesCount -gt 1) {
                                                     # Overall progress
                                                     $totalPercent = [math]::Min([math]::Round((($script:totalBytesCopied + $TotalBytesTransferred) / $script:totalSize * 100), 0), 100)
+                                                    $totalCopiedAll = [math]::Min([math]::Round((($script:totalBytesCopied + $TotalBytesTransferred)), 0), $script:totalSize)
                                                     
                                                     Write-Progress -Activity "Copying files ($totalPercent%)" `
-                                                        -Status "$($script:filesCopied) of $($script:filesCount) files ($(Format-FileSize $totalBytesCopied) of $(Format-FileSize $script:totalSize)) - $(Format-FileSize $script:currentSpeed)/s" `
+                                                        -Status "$($script:filesCopied) of $($script:filesCount) files ($(Format-FileSize $totalCopiedAll) of $(Format-FileSize $script:totalSize)) - $(Format-FileSize $script:currentSpeed)/s" `
                                                         -PercentComplete $totalPercent `
                                                         -Id $script:progressId
 
@@ -535,15 +553,6 @@ UseWinApi: $UseWinApi
                                             return [uint32]0  # PROGRESS_CONTINUE
                                         }
 
-                                        # Determine optimal copy flags
-                                        $copyFlags = 0
-                                        if ($file.Length -gt 10MB) {
-                                            $copyFlags = $copyFlags -bor 0x00001000  # COPY_FILE_NO_BUFFERING
-                                        }
-                                        if ($destPath -like "\\*") {  # Network path
-                                            $copyFlags = $copyFlags -bor 0x10000000  # COPY_FILE_REQUEST_COMPRESSED_TRAFFIC
-                                        }
-
                                         $result = [Win32Helpers.Win32CopyFileEx]::CopyFileEx(
                                             $file.FullName,
                                             $destPath,
@@ -555,6 +564,7 @@ UseWinApi: $UseWinApi
 
                                         if (-not $result) {
                                             $errorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                                            $failed = $true
                                             if ($script:cancelRequested) {
                                                 Write-Warning "File copy cancelled by user"
                                                 break
@@ -570,7 +580,6 @@ UseWinApi: $UseWinApi
                                         $destStream = $null
                                         
                                         try {
-                                            Write-Verbose "Using managed method for file copy operations"
                                             $sourceStream = [System.IO.FileStream]::new($file.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read)
                                             $destStream = [System.IO.FileStream]::new($destPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
                                             $bytesRead = 0
@@ -582,6 +591,7 @@ UseWinApi: $UseWinApi
                                                 if (Test-CancellationRequested) {
                                                     Write-Warning "Cancelling file copy operation..."
                                                     $continueProcessing = $false
+                                                    $failed = $true
                                                     break copyLoop
                                                 }
 
@@ -591,6 +601,7 @@ UseWinApi: $UseWinApi
                                                 catch {
                                                     Write-Warning "Error writing to destination: $_"
                                                     $continueProcessing = $false
+                                                    $failed = $true
                                                     break copyLoop
                                                 }
                                                 
@@ -602,6 +613,7 @@ UseWinApi: $UseWinApi
                                                 if (($now - $lastProgressUpdate) -gt $progressThreshold) {
                                                     if ($script:cancelRequested) {
                                                         $continueProcessing = $false
+                                                        $failed = $true
                                                         break copyLoop
                                                     }
 
@@ -644,6 +656,7 @@ UseWinApi: $UseWinApi
                                         catch {
                                             Write-Warning "Error during file copy: $_"
                                             $continueProcessing = $false
+                                            $failed = $true
                                         }
                                         finally {
                                             # Ensure streams are closed and disposed immediately
@@ -665,33 +678,62 @@ UseWinApi: $UseWinApi
                                             }
 
                                             # Clean up partial file if cancelled or failed
-                                            if (-not $continueProcessing -or $script:cancelRequested) {
+                                            if ((-not $continueProcessing) -or $script:cancelRequested -or $failed) {
                                                 Write-Verbose "Cleaning up partial file after cancellation/failure: $destPath"
                                                 try {
-                                                    [System.GC]::Collect()  # Force garbage collection
-                                                    [System.GC]::WaitForPendingFinalizers()  # Wait for finalizers
+                                                    # Close any remaining handles
+                                                    [System.GC]::Collect()
+                                                    [System.GC]::WaitForPendingFinalizers()
                                                     
-                                                    if (Test-Path -Path $destPath) {
-                                                        # Try to open the file exclusively to ensure it's not locked
-                                                        $fileInfo = [System.IO.FileInfo]::new($destPath)
+                                                    if (Test-Path -LiteralPath $destPath) {
+                                                        # Force close any open handles
                                                         try {
-                                                            $stream = $fileInfo.Open([System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
-                                                            $stream.Close()
-                                                            $stream.Dispose()
-                                                            
-                                                            # Now we can safely delete the file
-                                                            Remove-Item -Path $destPath -Force -ErrorAction Stop
-                                                            Write-Verbose "Successfully removed partial file: $destPath"
+                                                            $null = [System.IO.FileInfo]::new($destPath).Open([System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None).Close()
+                                                        } catch {
+                                                            Write-Verbose "File is still locked, attempting cleanup anyway"
                                                         }
-                                                        catch {
-                                                            Write-Warning "File is still locked, waiting for handles to be released..."
-                                                            Start-Sleep -Milliseconds 500
-                                                            Remove-Item -Path $destPath -Force -ErrorAction Stop
+                                                        
+                                                        # Try to delete the file multiple times with increasing delays
+                                                        $maxRetries = 30  # Increased retries
+                                                        $retryCount = 0
+                                                        $deleted = $false
+                                                        
+                                                        while (-not $deleted -and $retryCount -lt $maxRetries) {
+                                                            try {
+                                                                # Try to take ownership and set full permissions
+                                                                $acl = Get-Acl -LiteralPath $destPath
+                                                                $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+                                                                $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity.Name,"FullControl","Allow")
+                                                                $acl.SetAccessRule($rule)
+                                                                Set-Acl -LiteralPath $destPath -AclObject $acl -ErrorAction SilentlyContinue
+                                                                
+                                                                # Force remove read-only if set
+                                                                Set-ItemProperty -LiteralPath $destPath -Name IsReadOnly -Value $false -ErrorAction SilentlyContinue
+                                                                
+                                                                # Try to delete
+                                                                Remove-Item -LiteralPath $destPath -Force -ErrorAction Stop
+                                                                if (-not (Test-Path -LiteralPath $destPath)) {
+                                                                    $deleted = $true
+                                                                    Write-Verbose "Successfully removed partial file: $destPath"
+                                                                    break
+                                                                }
+                                                            }
+                                                            catch {
+                                                                $retryCount++
+                                                                if ($retryCount -lt $maxRetries) {
+                                                                    Write-Warning ("Retry {0} of {1}: Failed to remove partial file, retrying in {2} seconds..." -f $retryCount, $maxRetries, [math]::Min(2 * $retryCount, 10))
+                                                                    Start-Sleep -Seconds ([math]::Min(2 * $retryCount, 10))
+                                                                }
+                                                                else {
+                                                                    Write-Warning ("Failed to remove partial file after {0} attempts: {1}" -f $maxRetries, $destPath)
+                                                                    Write-Warning $_.Exception.Message
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
                                                 catch {
-                                                    Write-Warning "Failed to remove partial file $destPath : $_"
+                                                    Write-Warning ("Failed to clean up partial file {0}: {1}" -f $destPath, $_.Exception.Message)
                                                 }
                                             }
                                         }
@@ -704,8 +746,14 @@ UseWinApi: $UseWinApi
                                 }
                                 catch {
                                     Write-Warning "Error copying $($file.Name): $_"
+                                    $failed = $true
                                     if ($script:cancelRequested) {
                                         break
+                                    }
+                                }
+                                finally {
+                                    if (-not $failed) {
+                                        $verboseOutput += "Copied '$($file.Name)' to '$destPath'"
                                     }
                                 }
 
