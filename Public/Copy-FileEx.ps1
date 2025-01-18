@@ -244,6 +244,9 @@ UseWinApi: $UseWinApi
     }
 
     process {
+        $filesCopied = 0
+        $totalCopiedSize = 0
+
         # Add cancellation check at the start of process block
         if ($script:cancelCheckJob.State -eq 'Completed' -and $script:cancelCheckJob.Output) {
             $script:cancelRequested = $true
@@ -455,6 +458,9 @@ UseWinApi: $UseWinApi
                                         
                                         # Determine optimal copy flags
                                         $copyFlags = 0
+                                        if ($file.Length -gt 10MB) {
+                                            $copyFlags = $copyFlags -bor 0x00001000  # COPY_FILE_NO_BUFFERING
+                                        }
                                         
                                         # Check if path is network path or mapped drive more safely
                                         if ($destPath -like "\\*") {
@@ -754,6 +760,8 @@ UseWinApi: $UseWinApi
                                 finally {
                                     if (-not $failed) {
                                         $verboseOutput += "Copied '$($file.Name)' to '$destPath'"
+                                        $filesCopied++
+                                        $totalCopiedSize += $file.Length
                                     }
                                 }
 
@@ -777,9 +785,9 @@ UseWinApi: $UseWinApi
                             # Only show completion messages if not cancelled
                             if (-not $script:cancelRequested) {
                                 if ($files.Count -gt 1) {
-                                    $verboseOutput += "Total copied: $(Format-FileSize $totalSize) ($($files.Count) files)"
+                                    $verboseOutput += "Total copied: $(Format-FileSize $totalCopiedSize) ($($filesCopied) files)"
                                 } else {
-                                    $verboseOutput += "Total size: $(Format-FileSize $totalSize)"
+                                    $verboseOutput += "Total copied: $(Format-FileSize $totalCopiedSize)"
                                 }
 
                                 $verboseOutput += "Operation completed in $elapsedText"
