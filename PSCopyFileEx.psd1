@@ -12,7 +12,7 @@
 RootModule = 'PSCopyFileEx.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.0.3'
+ModuleVersion = '1.0.4'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -120,6 +120,10 @@ PrivateData = @{
 
         # ReleaseNotes of this module
         ReleaseNotes = @'
+1.0.4:
+- The smallest oopsie that has ever required an update:
+https://github.com/LordBubblesDev/PSCopyFileEx/commit/58c21cb
+
 1.0.3:
 - Readjusted verbose logging logic
 
