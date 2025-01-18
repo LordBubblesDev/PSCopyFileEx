@@ -12,7 +12,7 @@
 RootModule = 'PSCopyFileEx.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.0.2'
+ModuleVersion = '1.0.3'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -120,6 +120,9 @@ PrivateData = @{
 
         # ReleaseNotes of this module
         ReleaseNotes = @'
+1.0.3:
+- Readjusted verbose logging logic
+
 1.0.2:
 - Fixed verbose messages showing success messages when the operation failed
 - Fixed verbose messages indicating which copy method is used once per file copied

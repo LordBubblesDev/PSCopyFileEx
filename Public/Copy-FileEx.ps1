@@ -67,7 +67,7 @@
 # .NOTES
 # Author: LordBubbles
 # Module: PSCopyFileEx
-# Version: 1.0.2
+# Version: 1.0.3
 #
 # Performance Notes:
 # - Windows API method is generally faster
