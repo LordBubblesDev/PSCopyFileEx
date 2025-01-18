@@ -465,14 +465,12 @@ UseWinApi: $UseWinApi
                                         # Check if path is network path or mapped drive more safely
                                         if ($destPath -like "\\*") {
                                             $copyFlags = $copyFlags -bor 0x10000000  # COPY_FILE_REQUEST_COMPRESSED_TRAFFIC
-                                            Write-Verbose "Network path detected, using compressed traffic"
                                         }
                                         elseif ($destPath -match "^[A-Z]:\\") {
                                             try {
                                                 $drive = Get-PSDrive -Name $destPath[0] -ErrorAction Stop
                                                 if ($drive.DisplayRoot -like "\\*") {
                                                     $copyFlags = $copyFlags -bor 0x10000000  # COPY_FILE_REQUEST_COMPRESSED_TRAFFIC
-                                                    Write-Verbose "Network mapped drive detected, using compressed traffic"
                                                 }
                                             }
                                             catch {
