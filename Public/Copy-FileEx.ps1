@@ -426,7 +426,7 @@ UseWinApi: $UseWinApi
                             $verboseOutput = @()  # Collect verbose messages
                             foreach ($file in $files) {
                                 $failed = $false
-                                $filesCopied++
+                                $skipped = $false
                                 # Calculate relative path for destination
                                 if ($isFile) {
                                     # Use pre-calculated relative path for single files
@@ -447,6 +447,7 @@ UseWinApi: $UseWinApi
                                 if (Test-Path -LiteralPath $destPath) {
                                     if (-not $Force) {
                                         Write-Warning "Destination file already exists: $destPath. Use -Force to overwrite."
+                                        $skipped = $true
                                         continue
                                     }
                                     Write-Verbose "Overwriting existing file: $destPath"
@@ -756,7 +757,7 @@ UseWinApi: $UseWinApi
                                     }
                                 }
                                 finally {
-                                    if (-not $failed) {
+                                    if (-not $failed -and -not $skipped) {
                                         $verboseOutput += "Copied '$($file.Name)' to '$destPath'"
                                         $filesCopied++
                                         $totalCopiedSize += $file.Length
